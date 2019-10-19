@@ -3,114 +3,149 @@
 #include <math.h>
 #include "sort.h"
 
-#define has_bigger_items_before(array, index) ((index) > 0 && ((array)[(index)-1]) > ((array)[(index)]))
-#define append_to_bucket(bucket, element) ((bucket)->data[(bucket)->length++] = (element))
-
-void sort(double *array, size_t size)
+void sort(void *array, size_t length, size_t element_size, comparator_t compare, scoring_t score)
 {
-    if (size > MINIMAL_BUCKET_SORT_SIZE)
+    if (length < MINIMAL_BUCKET_SORT_SIZE)
     {
-        bucket_sort(array, size);
+        insertion_sort(array, length, element_size, compare);
     }
     else
     {
-        insertion_sort(array, size);
+        bucket_sort(array, length, element_size, compare, score);
     }
 }
 
-void bucket_sort(double *array, size_t size)
+void insertion_sort(void *array, size_t length, size_t element_size, comparator_t compare)
 {
-    bucket_sort_state *state = initialize_bucket_sort(array, size);
-    assign_to_buckets(state);
-    sort_and_join_buckets(state);
-    free(state);
-}
-
-void insertion_sort(double *array, size_t size)
-{
-    for (size_t i = 1; i < size; ++i)
+    for (size_t i = 1; i < length; ++i)
     {
-        for (size_t j = i; has_bigger_items_before(array, j); --j)
+        for (size_t j = i; j > 0; --j)
         {
-            double temp = array[j];
-            array[j] = array[j - 1];
-            array[j - 1] = temp;
+            void *previous = element_at(array, j - 1, element_size);
+            void *current = element_at(array, j, element_size);
+
+            if (compare(previous, current) <= 0)
+            {
+                break;
+            }
+
+            swap(previous, current, element_size);
         }
     }
 }
 
-bucket_sort_state *initialize_bucket_sort(double *array, size_t size)
+void swap(void *first, void *second, size_t element_size)
 {
-    size_t number_of_buckets = sqrt(size);
-    bucket_sort_state *state = malloc(sizeof(bucket_sort_state) + number_of_buckets * (sizeof(bucket) + size * sizeof(double)));
-    assert(state);
+    void *tmp = malloc(element_size);
+    assert(tmp);
 
-    state->number_of_elements = size;
-    state->number_of_buckets = number_of_buckets;
-    state->elements = array;
-    initialize_buckets(state);
+    memcpy(tmp, first, element_size);
+    memcpy(first, second, element_size);
+    memcpy(second, tmp, element_size);
 
-    state->min_element = min(array, size);
-    state->max_element = max(array, size);
-
-    return state;
+    free(tmp);
 }
 
-void assign_to_buckets(bucket_sort_state *state)
+void bucket_sort(void *array, size_t length, size_t element_size, comparator_t compare, scoring_t score)
 {
-    for (size_t i = 0; i < state->number_of_elements; ++i)
-    {
-        double element = state->elements[i];
-        size_t selected_bucket_index = select_bucket(state, element);
-        append_to_bucket(state->buckets + selected_bucket_index, element);
-    }
+    struct bucket_sort_t *bucket_sort = initialize_bucket_sort(array, length, element_size, compare, score);
+    assign_to_buckets(bucket_sort);
+    sort_and_join_buckets(bucket_sort);
+    free(bucket_sort);
 }
 
-void sort_and_join_buckets(bucket_sort_state *state)
+struct bucket_sort_t *initialize_bucket_sort(void *array, size_t length, size_t element_size, comparator_t compare, scoring_t score)
 {
-    size_t sorted_length = 0;
+    size_t number_of_buckets = sqrt(length);
+    struct bucket_sort_t *bucket_sort = malloc(sizeof(struct bucket_sort_t) + number_of_buckets * (sizeof(struct array_t) + length * element_size) + length * sizeof(double));
+    assert(bucket_sort);
 
-    for (size_t i = 0; i < state->number_of_buckets; ++i)
-    {
-        bucket *bucket = state->buckets + i;
-        if (bucket->length > 0)
-        {
-            insertion_sort(bucket->data, bucket->length);
-            memcpy(state->elements + sorted_length, bucket->data, bucket->length * sizeof(double));
-            sorted_length += bucket->length;
-        }
-    }
+    bucket_sort->compare = compare;
+    bucket_sort->score = score;
+    bucket_sort->array_to_sort = (struct array_t){length, element_size, array};
+    bucket_sort->grouped_array = (struct array_t){number_of_buckets, sizeof(struct array_t), NULL};
+    initialize_buckets(bucket_sort);
+    calculate_scores(bucket_sort);
+
+    return bucket_sort;
 }
 
-void initialize_buckets(bucket_sort_state *state)
+void initialize_buckets(struct bucket_sort_t *bucket_sort)
 {
-    bucket *buckets = (bucket *)(state + 1);
-    double *buckets_data = (double *)(buckets + state->number_of_buckets);
+    struct array_t *buckets = (struct array_t *)(bucket_sort + 1);
+    uint8_t *buckets_data = (uint8_t *)(buckets + bucket_sort->grouped_array.length);
 
-    for (size_t i = 0; i < state->number_of_buckets; ++i)
+    for (size_t i = 0; i < bucket_sort->grouped_array.length; ++i)
     {
         buckets[i].length = 0;
-        buckets[i].data = buckets_data + i * state->number_of_elements;
+        buckets[i].size = bucket_sort->array_to_sort.size;
+        buckets[i].data = buckets_data + i * bucket_sort->array_to_sort.size;
     }
 
-    state->buckets = buckets;
+    bucket_sort->grouped_array.data = (uint8_t *)buckets;
+    bucket_sort->scores = (double *)(buckets_data + bucket_sort->grouped_array.length * bucket_sort->array_to_sort.size);
 }
 
-size_t select_bucket(bucket_sort_state *state, double element)
+void assign_to_buckets(struct bucket_sort_t *bucket_sort)
 {
-    if (state->max_element <= state->min_element)
+    for (size_t i = 0; i < bucket_sort->array_to_sort.length; ++i)
+    {
+        void *element = element_at(bucket_sort->array_to_sort.data, i, bucket_sort->array_to_sort.size);
+        size_t selected_bucket_index = select_bucket(bucket_sort, bucket_sort->scores[i]);
+        append_to_selected_bucket(bucket_sort->grouped_array, selected_bucket_index, element);
+    }
+}
+
+void calculate_scores(struct bucket_sort_t *bucket_sort)
+{
+    for (size_t i = 0; i < bucket_sort->array_to_sort.length; ++i)
+    {
+        void *element = element_at(bucket_sort->array_to_sort.data, i, bucket_sort->array_to_sort.size);
+        bucket_sort->scores[i] = bucket_sort->score(element);
+    }
+
+    bucket_sort->max_score = max(bucket_sort->scores, bucket_sort->array_to_sort.length);
+    bucket_sort->min_score = max(bucket_sort->scores, bucket_sort->array_to_sort.length);
+}
+
+size_t select_bucket(struct bucket_sort_t *bucket_sort, double score)
+{
+    if (bucket_sort->max_score <= bucket_sort->min_score)
     {
         return 0;
     }
 
-    size_t result = (element - state->min_element) * state->number_of_buckets / (state->max_element - state->min_element);
+    size_t result = (score - bucket_sort->min_score) * bucket_sort->grouped_array.length / (bucket_sort->max_score - bucket_sort->min_score);
 
-    if (result >= state->number_of_buckets)
+    if (result >= bucket_sort->grouped_array.length)
     {
-        result = state->number_of_buckets - 1;
+        result = bucket_sort->grouped_array.length - 1;
     }
 
     return result;
+}
+
+void append_to_selected_bucket(struct array_t array, size_t index, void *element)
+{
+    struct array_t *selected_array = element_at(array.data, index, array.size);
+    memcpy(element_at(selected_array->data, selected_array->length, selected_array->size), element, selected_array->size);
+    ++selected_array->length;
+}
+
+void sort_and_join_buckets(struct bucket_sort_t *bucket_sort)
+{
+    size_t sorted_length = 0;
+
+    for (size_t i = 0; i < bucket_sort->grouped_array.length; ++i)
+    {
+        struct array_t *selected_array = element_at(bucket_sort->grouped_array.data, i, bucket_sort->grouped_array.size);
+        if (selected_array->length > 0)
+        {
+            insertion_sort(selected_array->data, selected_array->length, selected_array->size, bucket_sort->compare);
+            memcpy(bucket_sort->array_to_sort.data + sorted_length, selected_array->data, selected_array->length * selected_array->size);
+            sorted_length += selected_array->length * selected_array->size;
+        }
+    }
 }
 
 double min(double *array, size_t size)

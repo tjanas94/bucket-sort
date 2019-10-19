@@ -2,40 +2,56 @@
 #define _SORT_H_INCLUDED
 
 #include <stdlib.h>
+#include <stdint.h>
 
-#define MINIMAL_BUCKET_SORT_SIZE 5
+#define MINIMAL_BUCKET_SORT_SIZE 10
+#define array_length(array) (sizeof(array) / sizeof((array)[0]))
+#define arrays_equal(array, expected) (memcmp((array), (expected), sizeof(array)) == 0)
+#define element_at(array, index, size) ((void *)((uint8_t *)(array) + (index) * (size)))
 
-typedef struct bucket
+typedef double (*comparator_t)(void *, void *);
+
+typedef double (*scoring_t)(void *);
+
+struct array_t
 {
     size_t length;
-    double *data;
-} bucket;
+    size_t size;
+    uint8_t *data;
+};
 
-typedef struct bucket_sort_state
+struct bucket_sort_t
 {
-    size_t number_of_elements;
-    size_t number_of_buckets;
-    double *elements;
-    bucket *buckets;
-    double min_element;
-    double max_element;
-} bucket_sort_state;
+    struct array_t array_to_sort;
+    struct array_t grouped_array;
+    double *scores;
+    double min_score;
+    double max_score;
+    comparator_t compare;
+    scoring_t score;
+};
 
-void sort(double *, size_t);
+void sort(void *, size_t, size_t, comparator_t, scoring_t);
 
-void bucket_sort(double *, size_t);
+void insertion_sort(void *, size_t, size_t, comparator_t);
 
-void insertion_sort(double *, size_t);
+void swap(void *, void *, size_t);
 
-bucket_sort_state *initialize_bucket_sort(double *, size_t);
+void bucket_sort(void *, size_t, size_t, comparator_t, scoring_t);
 
-void assign_to_buckets(bucket_sort_state *);
+struct bucket_sort_t *initialize_bucket_sort(void *, size_t, size_t, comparator_t, scoring_t);
 
-void sort_and_join_buckets(bucket_sort_state *);
+void initialize_buckets(struct bucket_sort_t *);
 
-void initialize_buckets(bucket_sort_state *);
+void assign_to_buckets(struct bucket_sort_t *);
 
-size_t select_bucket(bucket_sort_state *, double);
+void calculate_scores(struct bucket_sort_t *);
+
+void append_to_selected_bucket(struct array_t, size_t, void *);
+
+size_t select_bucket(struct bucket_sort_t *, double);
+
+void sort_and_join_buckets(struct bucket_sort_t *);
 
 double min(double *, size_t);
 
